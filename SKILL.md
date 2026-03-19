@@ -1,80 +1,94 @@
 ---
 name: web-content-fetcher
 description: >
-  网页正文内容提取。支持 Jina Reader / Scrapling+html2text / web_fetch 三级降级策略，
-  自动返回干净的 Markdown 格式正文，保留标题、链接、图片 URL、列表结构。
-  能读取微信公众号文章（Jina 做不到的场景）。
-  触发条件：用户要抓取某个 URL 的正文内容、读取某篇文章、提取网页内容等。
+  Extract article content from any URL as clean Markdown.
+  Uses Scrapling script as primary method (with auto fast→stealth fallback),
+  Jina Reader as alternative for simple pages.
+  Preserves headings, links, images, lists, and code blocks.
+  Use this skill whenever the user wants to fetch, read, extract, scrape, or summarize
+  content from a URL — including blog posts, news articles, WeChat articles (微信公众号),
+  documentation pages, or any web page. Also trigger when the user says things like
+  "帮我读一下这篇文章", "抓取这个网页", "提取正文", or "read this page for me".
 ---
 
-# Web Content Fetcher — 网页正文提取
+# Web Content Fetcher
 
-## 能力说明
+Given a URL, return its main content as clean Markdown — headings, links, images, lists, code blocks all preserved.
 
-给一个 URL，返回干净的 Markdown 格式正文，保留：
-- 标题层级（# ## ###）
-- 超链接（[文字](url)）
-- 图片（![alt](url)）
-- 列表、代码块、引用块
+## Extraction Strategy
 
-## 提取策略（三级降级）
+Always try **one method per URL** — don't cascade blindly. Pick the right one upfront.
 
 ```
 URL
- ↓
-1. Jina Reader（首选）
-   web_fetch("https://r.jina.ai/<url>", maxChars=30000)
-   优点：快（~1.5s），格式干净
-   限制：200次/天免费配额
-   失败场景：微信公众号（403）、部分国内平台
- ↓
-2. Scrapling + html2text（Jina 超限或失败时）
-   exec: python3 scripts/fetch.py <url> 30000
-   优点：无限制，效果和 Jina 相当，能读微信公众号
-   适合：mp.weixin.qq.com、Substack、Medium 等反爬平台
- ↓
-3. web_fetch 直接抓（静态页面兜底）
-   web_fetch(url, maxChars=30000)
-   适合：GitHub README、普通静态博客、技术文档
+ │
+ ├─ 1. Scrapling script (preferred)
+ │     Run fetch.py — check the domain routing table to decide fast vs --stealth.
+ │     Works for most sites. Returns clean Markdown directly.
+ │
+ └─ 2. Jina Reader (fallback — only if Scrapling fails or dependencies not installed)
+       web_fetch("https://r.jina.ai/<url>")
+       Free tier: 200 req/day. Fast (~1-2s), good Markdown output.
+       Does NOT work for: WeChat (403), some Chinese platforms.
 ```
 
-## 域名快捷路由
-
-直接跳过 Jina，节省配额：
-- `mp.weixin.qq.com` → 直接用 Scrapling
-- `zhuanlan.zhihu.com`、`juejin.cn`、`csdn.net` → 优先 Scrapling
-
-## 使用方式
-
-### 自动模式（推荐）
-
-直接告诉我要读取的 URL，我会自动选择合适的方案：
-
-> 帮我读取这篇文章：https://example.com/article
-
-### 手动指定方案
-
-> 用 Scrapling 读取：https://mp.weixin.qq.com/s/xxx
-
-## 安装依赖
+### Scrapling script
 
 ```bash
-# 安装基础依赖（包含 fetchers）
-pip install "scrapling[fetchers]" html2text --break-system-packages
-
-# 安装浏览器依赖（首次使用需要执行）
-scrapling install
+python3 <SKILL_DIR>/scripts/fetch.py "<url>" [max_chars] [--stealth]
 ```
 
-## 脚本路径
+`<SKILL_DIR>` is the directory where this SKILL.md lives. Resolve it before calling the script.
 
-`scripts/fetch.py` — Scrapling + html2text 提取脚本
+The script has two modes built in:
+- **Default (fast):** HTTP fetch, ~1-3s, works for most sites
+- **`--stealth`:** Headless browser, ~5-15s, for JS-rendered or anti-scraping sites
 
-调用方式：
+When run without `--stealth`, the script automatically falls back to stealth if the fast result has too little content. So you rarely need to specify `--stealth` manually — the only reason to force it is when you already know the site needs it (see routing table), which saves the initial fast attempt.
+
+## Domain Routing
+
+Use this table to pick the right mode on the first call:
+
+| Domain | Command | Why |
+|--------|---------|-----|
+| `mp.weixin.qq.com` | `fetch.py <url> --stealth` | JS-rendered content |
+| `zhuanlan.zhihu.com` | `fetch.py <url> --stealth` | Anti-scraping + JS |
+| `juejin.cn` | `fetch.py <url> --stealth` | JS-rendered SPA |
+| `sspai.com` | `fetch.py <url>` | Static HTML |
+| `blog.csdn.net` | `fetch.py <url>` | Static HTML |
+| `ruanyifeng.com` | `fetch.py <url>` | Static blog |
+| `openai.com` | `fetch.py <url>` | Static HTML |
+| `blog.google` | `fetch.py <url>` | Static HTML |
+| Everything else | `fetch.py <url>` | Auto-fallback handles it |
+
+## Script Options
+
 ```bash
-python3 ~/.openclaw/workspace/skills/web-content-fetcher/scripts/fetch.py <url> [max_chars]
+# Basic — auto-selects fast or stealth
+python3 <SKILL_DIR>/scripts/fetch.py "https://sspai.com/post/73145"
+
+# Force stealth for known JS-heavy sites
+python3 <SKILL_DIR>/scripts/fetch.py "https://mp.weixin.qq.com/s/xxx" --stealth
+
+# Limit output to 15000 characters (default: 30000)
+python3 <SKILL_DIR>/scripts/fetch.py "https://example.com/article" 15000
+
+# JSON output with metadata (url, mode, selector, content_length)
+python3 <SKILL_DIR>/scripts/fetch.py "https://example.com" --json
 ```
 
-## 防死循环规则
+## Install Dependencies
 
-同一个 URL 累计失败 2 次就放弃，记录为"无法提取"，不重复重试。
+First use only — the script checks and tells you if anything is missing:
+
+```bash
+pip install scrapling html2text
+```
+
+If on system-managed Python (macOS/Linux), add `--break-system-packages` or use a venv.
+
+## Failure Rules
+
+- Same URL fails once → give up, tell the user "unable to extract content from this URL"
+- Do not retry — each failed call wastes context tokens

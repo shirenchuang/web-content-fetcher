@@ -6,7 +6,6 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![OpenClaw Skill](https://img.shields.io/badge/OpenClaw-Skill-purple)](https://github.com/shirenchuang/web-content-fetcher)
 
 </div>
 
@@ -17,8 +16,9 @@
 Web Content Fetcher 是一个轻量级的网页正文提取工具，能够自动将任意网页转换为干净的 Markdown 格式，保留标题、链接、图片和列表结构。
 
 **核心优势：**
-- 支持 Jina Reader / Scrapling / web_fetch 三级降级策略
-- 完美支持微信公众号文章（Jina 无法读取的场景）
+- Scrapling 优先提取，内置 fast / stealth 双模式，自动降级
+- Jina Reader 作为二级备选
+- 完美支持微信公众号、掘金、CSDN 等国内平台
 - 返回标准 Markdown 格式，便于后续处理
 - 零配置，开箱即用
 
@@ -26,59 +26,51 @@ Web Content Fetcher 是一个轻量级的网页正文提取工具，能够自动
 
 ## 安装
 
-### 方式一：作为 OpenClaw Skill 安装（推荐）
+### 作为 Claude Code Skill 安装
 
 ```bash
-npx skills add shirenchuang/web-content-fetcher
+# Clone
+git clone https://github.com/shirenchuang/web-content-fetcher.git
+
+# Copy to Claude Code skills directory
+cp -r web-content-fetcher ~/.claude/skills/
 ```
 
-### 方式二：手动安装
-
-1. 将整个目录复制到 OpenClaw skills 目录：
-   ```bash
-   cp -r web-content-fetcher ~/.openclaw/workspace/skills/
-   ```
-
-2. 安装 Python 依赖：
-   ```bash
-   cd ~/.openclaw/workspace/skills/web-content-fetcher
-   pip install -r requirements.txt
-   ```
-
-   > **注意**：首次安装后需要运行 `scrapling install` 下载浏览器依赖
-
-3. 重启 OpenClaw，skill 自动生效
-
-### 依赖说明
-
-本工具基于 [Scrapling](https://github.com/D4Vinci/Scrapling) 构建，使用 fetchers 功能需要额外安装浏览器依赖：
+### 安装 Python 依赖
 
 ```bash
-# 安装完成后执行
-scrapling install
+pip install scrapling html2text
 ```
+
+> **注意**：在系统管理的 Python (macOS/Linux) 上，加 `--break-system-packages` 或使用 venv。
 
 ---
 
 ## 使用方式
 
-### 在 OpenClaw 中使用
+### 在 Claude Code 中使用
 
 直接告诉 AI 你要读取的 URL，会自动选择最佳方案：
 
 ```
-帮我读取这篇文章：[https://example.com/article](https://mp.weixin.qq.com/s/EwVItQH4JUsONqv_Fmi4wQ)
-用 Scrapling 读取这篇公众号：https://mp.weixin.qq.com/s/EwVItQH4JUsONqv_Fmi4wQ
+帮我读取这篇文章：https://mp.weixin.qq.com/s/EwVItQH4JUsONqv_Fmi4wQ
+Extract the content from https://openai.com/blog/gpt-4o
 ```
 
 ### 命令行单独使用
 
 ```bash
-# 基础用法
-python3 scripts/fetch.py <url> [max_chars]
+# 基础用法（自动选择 fast 或 stealth 模式）
+python3 scripts/fetch.py https://sspai.com/post/73145
 
-# 示例：读取微信公众号文章
-python3 scripts/fetch.py https://mp.weixin.qq.com/s/EwVItQH4JUsONqv_Fmi4wQ 30000
+# 强制 stealth 模式（用于 JS 渲染页面）
+python3 scripts/fetch.py https://mp.weixin.qq.com/s/xxx --stealth
+
+# 限制输出字符数（默认 30000）
+python3 scripts/fetch.py https://example.com/article 15000
+
+# JSON 输出（含 url, mode, selector, content_length）
+python3 scripts/fetch.py https://example.com --json
 
 # 输出到文件
 python3 scripts/fetch.py https://example.com/article > output.md
@@ -93,53 +85,49 @@ URL 输入
     │
     ▼
 ┌─────────────────────────────────────┐
-│  1. Jina Reader（首选）              │
-│     · 速度快（~1.5s），格式干净      │
+│  1. Scrapling（首选）                │
+│     · fast 模式：~1-3s，大部分网站   │
+│     · stealth 模式：~5-15s，JS 渲染  │
+│     · 内容太少时自动 fast → stealth   │
+└─────────────────────────────────────┘
+    │ 失败 / 未安装依赖
+    ▼
+┌─────────────────────────────────────┐
+│  2. Jina Reader（备选）              │
+│     · 速度快（~1-2s），格式干净      │
 │     · 免费额度：200次/天             │
 │     · 不支持：微信公众号、部分国内站  │
 └─────────────────────────────────────┘
-    │ 失败/超限
-    ▼
-┌─────────────────────────────────────┐
-│  2. Scrapling + html2text           │
-│     · 无限制，效果与 Jina 相当       │
-│     · 支持：公众号、Substack、Medium  │
-│     · 反爬平台友好                   │
-└─────────────────────────────────────┘
-    │ 失败
-    ▼
-┌─────────────────────────────────────┐
-│  3. web_fetch（兜底）                │
-│     · 静态页面兜底方案               │
-│     · 适合：GitHub README、技术文档   │
-└─────────────────────────────────────┘
 ```
 
-### 域名快捷路由
+### 域名路由
 
-为节省 Jina 配额，以下域名直接使用 Scrapling：
-
-| 域名 | 路由策略 |
-|------|---------|
-| `mp.weixin.qq.com` | 直跳 Scrapling |
-| `zhuanlan.zhihu.com` | 优先 Scrapling |
-| `juejin.cn` | 优先 Scrapling |
-| `csdn.net` | 优先 Scrapling |
+| 域名 | 模式 | 说明 |
+|------|------|------|
+| `mp.weixin.qq.com` | `--stealth` | JS 渲染内容 |
+| `zhuanlan.zhihu.com` | `--stealth` | 反爬 + JS |
+| `juejin.cn` | `--stealth` | JS 渲染 SPA |
+| `sspai.com` | fast | 静态 HTML |
+| `blog.csdn.net` | fast | 静态 HTML |
+| 其他 | fast | 自动降级 |
 
 ---
 
 ## 支持平台
 
-| 平台 | 状态 | 备注 |
-|------|:----:|------|
-| 微信公众号 | ✅ | Jina 无法读取，Scrapling 完美支持 |
-| Substack | ✅ | |
-| Medium | ✅ | |
-| 知乎专栏 | ✅ | |
-| 掘金 | ✅ | |
-| CSDN | ✅ | |
-| GitHub | ✅ | web_fetch 亦可 |
-| 小红书 | ❌ | 需要登录态 |
+| 平台 | 模式 | 状态 |
+|------|------|:----:|
+| 微信公众号 | stealth | ✅ |
+| 掘金 | stealth | ✅ |
+| CSDN | fast | ✅ |
+| 少数派 | fast | ✅ |
+| Substack | fast | ✅ |
+| Medium | fast | ✅ |
+| OpenAI / Google Blog | fast | ✅ |
+| 阮一峰博客 | fast | ✅ |
+| GitHub | fast | ✅ |
+| 知乎 | stealth | ✅ |
+| 小红书 | ❌ 需登录态 | ❌ |
 
 ---
 
@@ -156,7 +144,7 @@ URL 输入
 
 ## 相关项目
 
-### [Kuaifa（快发）](https://github.com/shirenchuang/kuaifa) - 公众号一键排版发布
+### [Kuaifa（快发）](https://github.com/shirenchuang/kuaifa) — 公众号一键排版发布
 
 如果你需要将 Markdown 文章发布到微信公众号，推荐使用 **Kuaifa**：
 
@@ -169,8 +157,6 @@ URL 输入
 pip install kuaifa
 kuaifa publish your-article.md
 ```
-
-**Star**: [github.com/shirenchuang/kuaifa](https://github.com/shirenchuang/kuaifa)
 
 ---
 
@@ -194,4 +180,4 @@ AI科技博主 · 10+年大厂AI提效专家
 
 ## License
 
-MIT License
+MIT
