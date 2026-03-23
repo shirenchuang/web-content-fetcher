@@ -35,7 +35,7 @@ URL
 ### Scrapling script
 
 ```bash
-python3 <SKILL_DIR>/scripts/fetch.py "<url>" [max_chars] [--stealth]
+uv run <SKILL_DIR>/scripts/fetch.py "<url>" [max_chars] [--stealth]
 ```
 
 `<SKILL_DIR>` is the directory where this SKILL.md lives. Resolve it before calling the script.
@@ -66,27 +66,42 @@ Use this table to pick the right mode on the first call:
 
 ```bash
 # Basic — auto-selects fast or stealth
-python3 <SKILL_DIR>/scripts/fetch.py "https://sspai.com/post/73145"
+uv run <SKILL_DIR>/scripts/fetch.py "https://sspai.com/post/73145"
 
 # Force stealth for known JS-heavy sites
-python3 <SKILL_DIR>/scripts/fetch.py "https://mp.weixin.qq.com/s/xxx" --stealth
+uv run <SKILL_DIR>/scripts/fetch.py "https://mp.weixin.qq.com/s/xxx" --stealth
 
 # Limit output to 15000 characters (default: 30000)
-python3 <SKILL_DIR>/scripts/fetch.py "https://example.com/article" 15000
+uv run <SKILL_DIR>/scripts/fetch.py "https://example.com/article" 15000
 
 # JSON output with metadata (url, mode, selector, content_length)
-python3 <SKILL_DIR>/scripts/fetch.py "https://example.com" --json
+uv run <SKILL_DIR>/scripts/fetch.py "https://example.com" --json
 ```
 
 ## Install Dependencies
 
-First use only — the script checks and tells you if anything is missing:
+The script uses [PEP 723](https://peps.python.org/pep-0723/) inline metadata — `uv` resolves dependencies automatically in an isolated environment. No global installs needed.
+
+**Install `uv` (one-time):**
+
+```bash
+# Option 1: standalone installer (recommended — doesn't touch Python at all)
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Windows (PowerShell)
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# Option 2: via pip
+pip install uv
+```
+
+That's it — `scrapling` and `html2text` are declared in the script and resolved on first run.
+
+**If you don't have `uv`:** the script still works with plain `python3`, but you'll need to install dependencies globally:
 
 ```bash
 pip install scrapling html2text
 ```
-
-If on system-managed Python (macOS/Linux), add `--break-system-packages` or use a venv.
 
 ## Failure Rules
 

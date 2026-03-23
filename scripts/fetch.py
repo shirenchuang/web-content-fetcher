@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["scrapling[fetchers]", "html2text"]
+# ///
 """
 Universal web content extractor (Scrapling + html2text).
 Returns clean Markdown with headings, links, images, lists, and code blocks.
 
 Usage:
-  python3 fetch.py <url> [max_chars] [--stealth]
+  uv run fetch.py <url> [max_chars] [--stealth]
 
 Modes:
   (default)   Fast HTTP fetch via Fetcher — works for most sites (~1-3s)
@@ -12,15 +16,22 @@ Modes:
               anti-scraping sites like WeChat, Zhihu, Juejin (~5-15s)
 
 Examples:
-  python3 fetch.py https://sspai.com/post/73145
-  python3 fetch.py https://mp.weixin.qq.com/s/xxx 30000 --stealth
-  python3 fetch.py https://zhuanlan.zhihu.com/p/12345 --stealth
+  uv run fetch.py https://sspai.com/post/73145
+  uv run fetch.py https://mp.weixin.qq.com/s/xxx 30000 --stealth
+  uv run fetch.py https://zhuanlan.zhihu.com/p/12345 --stealth
 """
 
 import sys
+import os
 import re
 import json
 import logging
+
+# Ensure UTF-8 output on Windows (avoid GBK encoding errors with Chinese content)
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 
 def check_dependencies():
@@ -36,10 +47,23 @@ def check_dependencies():
         missing.append("html2text")
 
     if missing:
+        import shutil
+
+        if shutil.which("uv"):
+            hint = f"  uv run {__file__} <url>   (dependencies are resolved automatically)"
+        else:
+            hint = (
+                f"  Option 1 (recommended — isolated):\n"
+                f"    pip install uv\n"
+                f"    uv run {__file__} <url>\n"
+                f"\n"
+                f"  Option 2 (global install):\n"
+                f"    pip install {' '.join(missing)}"
+            )
         print(
             f"Error: missing dependencies: {', '.join(missing)}\n"
-            f"Install with:\n"
-            f"  pip install {' '.join(missing)}",
+            f"\n"
+            f"{hint}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -51,11 +75,37 @@ def fix_lazy_images(html_raw):
     Many Chinese platforms use data-src for the real image URL while src
     holds a tiny placeholder. html2text only reads src, so we swap them.
     """
-    return re.sub(
-        r'<img([^>]*?)\sdata-src="([^"]+)"([^>]*?)>',
-        lambda m: f'<img{m.group(1)} src="{m.group(2)}"{m.group(3)}>',
+    def _replace(m):
+        tag = m.group(0)
+        data_src = m.group(1)
+        # Remove existing src="..." to avoid duplicate src attributes
+        tag = re.sub(r'\ssrc="[^"]*"', '', tag)
+        # Remove the data-src="..." itself
+        tag = re.sub(r'\sdata-src="[^"]*"', '', tag)
+        # Insert the real src after <img
+        tag = tag.replace('<img', f'<img src="{data_src}"', 1)
+        return tag
+
+    return re.sub(r'<img[^>]*?\sdata-src="([^"]+)"[^>]*?>', _replace, html_raw)
+
+
+def fix_wechat_code_blocks(html_raw):
+    """
+    Fix WeChat's code snippet blocks:
+    1. Remove line-number <ul> lists (rendered as '* * * *' by html2text).
+    2. Insert newlines between consecutive <code> tags inside <pre>, so each
+       line renders on its own line instead of being concatenated.
+    """
+    # Remove line-number lists
+    html_raw = re.sub(
+        r'<ul\s+class="code-snippet__line-index[^"]*"[^>]*>.*?</ul>',
+        '',
         html_raw,
+        flags=re.DOTALL,
     )
+    # Insert newline between consecutive </code><code> inside <pre>
+    html_raw = re.sub(r'</code>\s*<code>', '\n', html_raw)
+    return html_raw
 
 
 # CSS selectors in priority order — the first match with enough content wins.
@@ -94,6 +144,7 @@ def html_to_markdown(html_raw, max_chars=30000):
     import html2text
 
     html_raw = fix_lazy_images(html_raw)
+    html_raw = fix_wechat_code_blocks(html_raw)
 
     h = html2text.HTML2Text()
     h.ignore_links = False
@@ -101,8 +152,11 @@ def html_to_markdown(html_raw, max_chars=30000):
     h.body_width = 0       # No line wrapping
     h.skip_internal_links = True
     h.ignore_emphasis = False
+    h.mark_code = True     # Use fenced code blocks (```) instead of indentation
 
     md = h.handle(html_raw)
+    # Convert [code]...[/code] to fenced code blocks
+    md = md.replace("[code]", "```").replace("[/code]", "```")
     md = re.sub(r"\n{3,}", "\n\n", md).strip()
     return md[:max_chars]
 
