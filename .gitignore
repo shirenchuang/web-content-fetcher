@@ -1,1 +1,3 @@
 test-results/
+__pycache__/
+*.pyc

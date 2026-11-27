@@ -46,6 +46,8 @@ The script has two modes built in:
 
 When run without `--stealth`, the script automatically falls back to stealth if the fast result has too little content. So you rarely need to specify `--stealth` manually — the only reason to force it is when you already know the site needs it (see routing table), which saves the initial fast attempt.
 
+Internal content-quality chain inside `fetch.py` (no extra flags needed): CSS selectors in priority order, with weak/tiny matches skipped (a footer-sized false match no longer wins over the real body) → **trafilatura auto-extraction** when no selector yields a good container (selector-mismatch sites) → whole-body conversion → stealth. `trafilatura` is optional: when not installed this step is skipped silently.
+
 ## Domain Routing
 
 Use this table to pick the right mode on the first call:
@@ -83,7 +85,7 @@ python3 <SKILL_DIR>/scripts/fetch.py "https://example.com" --json
 First use only — the script checks and tells you if anything is missing:
 
 ```bash
-pip install scrapling html2text
+pip install scrapling html2text trafilatura
 ```
 
 If on system-managed Python (macOS/Linux), add `--break-system-packages` or use a venv.
