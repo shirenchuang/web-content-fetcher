@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Universal web content extractor (Scrapling + html2text).
+Universal web content extractor (Scrapling + html2text + trafilatura fallback).
 Returns clean Markdown with headings, links, images, lists, and code blocks.
 
 Usage:
@@ -11,8 +11,16 @@ Modes:
   --stealth   Headless browser via StealthyFetcher — for JS-rendered or
               anti-scraping sites like WeChat, Zhihu, Juejin (~5-15s)
 
+Fallback chain (per fetch):
+  1. CSS selector list (priority order; weak/tiny matches are skipped)
+  2. trafilatura auto main-content extraction — when no selector yields
+     a good-enough container (selector mismatch, e.g. aliyun articles)
+  3. whole-body html2text conversion
+  4. stealth headless browser (fast mode only, when result still too short)
+
 Examples:
   python3 fetch.py https://sspai.com/post/73145
+  python3 fetch.py https://developer.aliyun.com/article/1725435
   python3 fetch.py https://mp.weixin.qq.com/s/xxx 30000 --stealth
   python3 fetch.py https://zhuanlan.zhihu.com/p/12345 --stealth
 """
@@ -88,6 +96,12 @@ WECHAT_SELECTORS = [
 # Minimum characters for a selector match to be considered "real content"
 MIN_CONTENT_LENGTH = 200
 
+# A match smaller than page_html // CONTENT_RATIO_DIVISOR on a large page is
+# treated as the wrong container (e.g. footer <article> instead of the body).
+# 2% of raw HTML length — real article bodies clear this easily; footers don't.
+CONTENT_RATIO_DIVISOR = 50
+LARGE_PAGE_THRESHOLD = 5000
+
 
 def html_to_markdown(html_raw, max_chars=30000):
     """Convert raw HTML to clean Markdown."""
@@ -107,23 +121,72 @@ def html_to_markdown(html_raw, max_chars=30000):
     return md[:max_chars]
 
 
+def _good_enough(md, page_html):
+    """
+    True when md looks like a real article body, not a tiny wrong container.
+    Requires MIN_CONTENT_LENGTH and, on large pages, a sane content ratio.
+    """
+    if len(md) < MIN_CONTENT_LENGTH:
+        return False
+    if len(page_html) > LARGE_PAGE_THRESHOLD and len(md) < len(page_html) // CONTENT_RATIO_DIVISOR:
+        return False
+    return True
+
+
+def _trafilatura_extract(html_raw, max_chars=30000):
+    """
+    Auto main-content extraction via trafilatura (optional dependency).
+    Returns Markdown/text, or None when unavailable or nothing extracted.
+    """
+    try:
+        import trafilatura
+    except ImportError:
+        return None
+
+    for output_format in ("markdown", "txt"):
+        try:
+            md = trafilatura.extract(
+                html_raw,
+                output_format=output_format,
+                include_comments=False,
+                include_tables=True,
+            )
+        except Exception:
+            md = None
+        if md and md.strip():
+            return md.strip()[:max_chars]
+    return None
+
+
 def extract_content(page, url, max_chars=30000):
     """
     Try content selectors to find the article body.
     Returns (markdown_text, matched_selector).
+
+    Selector matches are quality-gated: a match that is too short or tiny
+    relative to the page is skipped (continue) so later, more specific
+    selectors get a chance. When no selector is good enough, falls back to
+    trafilatura auto-extraction, then whole-body conversion.
     """
     is_wechat = "mp.weixin.qq.com" in url
     selectors = (WECHAT_SELECTORS + CONTENT_SELECTORS) if is_wechat else CONTENT_SELECTORS
+    page_html = page.html_content
 
     for selector in selectors:
         els = page.css(selector)
         if els:
             md = html_to_markdown(els[0].html_content, max_chars)
-            if len(md) >= MIN_CONTENT_LENGTH:
+            if _good_enough(md, page_html):
                 return md, selector
 
-    # Fallback: convert the entire page
-    md = html_to_markdown(page.html_content, max_chars)
+    # No selector was good enough: trafilatura auto-detection first —
+    # it finds main content without site-specific selectors.
+    t_md = _trafilatura_extract(page_html, max_chars)
+    if t_md and _good_enough(t_md, page_html):
+        return t_md, "trafilatura(auto-fallback)"
+
+    # Last resort: convert the entire page
+    md = html_to_markdown(page_html, max_chars)
     return md, "body(fallback)"
 
 
